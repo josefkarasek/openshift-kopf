@@ -16,6 +16,10 @@ cat <<EOF > /var/www/html/kopf_external_settings.json
 }
 EOF
 
+# create key pair where the private key is stored in the traditional format (RSA)
+cat /etc/elasticsearch/secret/admin-cert > /etc/pki/tls/certs/adminkeypair.pem
+openssl rsa -in /etc/elasticsearch/secret/admin-key >> /etc/pki/tls/certs/adminkeypair.pem
+
 rm -rf /run/httpd/* /tmp/httpd*
 
 exec /usr/sbin/apachectl -DFOREGROUND
