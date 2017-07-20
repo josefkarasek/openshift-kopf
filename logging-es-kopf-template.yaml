@@ -4,38 +4,69 @@ apiVersion: v1
 metadata:
   name: logging-es-kopf
   annotations:
-    openshift.io/display-name: Kopf for elasticsearch
-    description: Kopf is a simple web administration tool for elasticsearch written in JavaScript + AngularJS + jQuery + Twitter bootstrap. See github.com/lmenezes/elasticsearch-kopf
+    openshift.io/display-name: Web administration tool for elasticsearch
+    description: Kopf is a simple web administration tool for elasticsearch written in JavaScript + AngularJS + jQuery + Twitter bootstrap. For more information see github.com/lmenezes/elasticsearch-kopf
     tags: kopf,elasticsearch,administration
     iconClass: icon-apache
     template.openshift.io/long-description: This template defines resources needed
-      to deploy Kopf, the web administration tool for elasticsearch.
-message: |-
-  The following service(s) have been created in your project: ${NAME}.
-
-  For more information about using this template, including OpenShift considerations, see https://github.com/openshift/httpd-ex/blob/master/README.md.
+      to deploy Kopf, the web administration tool for elasticsearch v2.
 labels:
   template: logging-es-kopf
 objects:
-- kind: Service
-  apiVersion: v1
+- apiVersion: v1
+  kind: OAuthClient
   metadata:
-    name: "${NAME}"
+    labels:
+      logging-infra: support
+    name: kopf-proxy
+  redirectURIs:
+  - https://${KOPF_SECURE_URL}
+  respondWithChallenges: false
+  secret: ${OPENSHIFT_OAUTH_CLIENT_SECRET}
+  scopeRestrictions:
+  - literals:
+    - user:info
+    - user:check-access
+    - user:list-projects
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: aggregated-logging-es-kopf
+    labels:
+      logging: logging-es-kopf
+    annotations:
+      serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"logging-es-kopf"}}'
+- kind: Route
+  metadata:
+    name: logging-es-kopf
+    labels:
+      logging: logging-es-kopf
+  spec:
+    host: ${KOPF_SECURE_URL}
+    to:
+      name: logging-es-kopf
+    tls:
+      termination: Reencrypt
+- kind: Service
+  metadata:
+    name: logging-es-kopf
     annotations:
       description: Exposes and load balances the application pods
     labels:
       logging: logging-es-kopf
+    annotations:
+      service.alpha.openshift.io/serving-cert-secret-name: proxy-tls
   spec:
     ports:
-    - name: kopf
-      port: 8080
-      targetPort: 8080
+    - name: proxy
+      port: 443
+      targetPort: 4443
     selector:
-      name: "${NAME}"
+      logging: logging-es-kopf
 - kind: ImageStream
   apiVersion: v1
   metadata:
-    name: "${NAME}"
+    name: logging-es-kopf
     labels:
       logging: logging-es-kopf
     annotations:
@@ -43,10 +74,10 @@ objects:
 - kind: ImageStream
   apiVersion: v1
   metadata:
-    name: httpd
+    name: openshift-httpd
     labels:
       logging: logging-es-kopf
-    namespace: logging
+    namespace: ${NAMESPACE}
     annotations:
       openshift.io/display-name: apache http server
   spec:
@@ -54,7 +85,7 @@ objects:
 - kind: BuildConfig
   apiVersion: v1
   metadata:
-    name: "${NAME}"
+    name: logging-es-kopf
     labels:
       logging: logging-es-kopf
     annotations:
@@ -63,32 +94,99 @@ objects:
     source:
       type: Git
       git:
-        uri: https://github.com/lmenezes/elasticsearch-kopf.git
-        ref: master
-      contextDir: _site
+        uri: ${SOURCE_REPOSITORY_URL}
+        ref: ${SOURCE_REPOSITORY_REF}
+      contextDir: ${CONTEXT_DIR}
     strategy:
       type: Source
       sourceStrategy:
         from:
           kind: ImageStreamTag
-          namespace: logging
-          name: httpd:latest
+          namespace: ${NAMESPACE}
+          name: openshift-httpd:latest
     output:
       to:
         kind: ImageStreamTag
-        name: "${NAME}:latest"
+        name: logging-es-kopf:latest
     triggers:
     - type: ImageChange
     - type: ConfigChange
 - kind: DeploymentConfig
   apiVersion: v1
   metadata:
-    name: "${NAME}"
+    name: logging-es-kopf
     labels:
       logging: logging-es-kopf
     annotations:
       description: Defines how to deploy the application server
   spec:
+    replicas: 1
+    selector:
+      name: logging-es-kopf
+    template:
+      metadata:
+        name: logging-es-kopf
+        labels:
+          name: logging-es-kopf
+          logging: logging-es-kopf
+      spec:
+        containers:
+        - name: logging-es-kopf
+          image: logging-es-kopf
+          command: ["/opt/app-root/scripts/run-kopf.sh"]
+          ports:
+          volumeMounts:
+          - mountPath: /etc/httpd/conf/
+            name: config
+          - mountPath: /opt/app-root/scripts/
+            name: run
+          - mountPath: /etc/elasticsearch/secret
+            name: elasticsearch
+            readOnly: true
+          resources:
+            limits:
+              memory: ${KOPF_MEMORY_LIMIT}
+        - name: logging-es-kopf-auth-proxy
+          image: openshift/oauth-proxy:v1.0.0
+          imagePullPolicy: Always
+          args:
+          - --https-address=:4443
+          - -provider=openshift
+          - -client-id=kopf-proxy
+          - -client-secret=${OPENSHIFT_OAUTH_CLIENT_SECRET}
+          - -upstream=http://localhost:8080
+          - '-openshift-sar={"namespace": "default", "verb": "create", "resource": "pods"}'
+          - --tls-cert=/etc/tls/private/tls.crt
+          - --tls-key=/etc/tls/private/tls.key
+          - --cookie-secret=${SESSION_SECRET}=
+          - -pass-access-token
+          - -ssl-insecure-skip-verify=true
+          ports:
+          - containerPort: 4443
+            name: kopf-proxy
+            protocol: TCP
+          volumeMounts:
+          - mountPath: /etc/tls/private
+            name: proxy-tls
+            readOnly: true
+          resources:
+            limits:
+              memory: ${AUTH_PROXY_MEMORY_LIMIT}
+        volumes:
+        - name: elasticsearch
+          secret:
+            secretName: logging-elasticsearch
+        - name: config
+          configMap:
+            name: logging-es-kopf-config
+            defaultMode: 0611
+        - name: run
+          configMap:
+            name: logging-es-kopf-run
+            defaultMode: 0611
+        - name: proxy-tls
+          secret:
+            secretName: proxy-tls
     strategy:
       type: Recreate
     triggers:
@@ -99,50 +197,8 @@ objects:
         - logging-es-kopf
         from:
           kind: ImageStreamTag
-          name: "${NAME}:latest"
+          name: logging-es-kopf:latest
     - type: ConfigChange
-    replicas: 1
-    selector:
-      name: "${NAME}"
-    template:
-      metadata:
-        name: "${NAME}"
-        labels:
-          name: "${NAME}"
-      spec:
-        containers:
-        - name: logging-es-kopf
-          image: logging-es-kopf
-          command: ["/opt/app-root/scripts/run-kopf.sh"]
-          # args: ["-c", "/opt/scripts/run-kopf.sh"]
-          ports:
-          - containerPort: 8080
-            name: kopf
-            protocol: TCP
-          volumeMounts:
-          - mountPath: /etc/httpd/conf/
-            name: config
-            readOnly: false
-          - mountPath: /opt/app-root/scripts/
-            name: run
-            readOnly: false
-          - mountPath: /etc/elasticsearch/secret
-            name: elasticsearch
-            readOnly: false
-        volumes:
-        - name: elasticsearch
-          secret:
-            defaultMode: 0777
-            secretName: logging-elasticsearch
-        - name: config
-          configMap:
-            name: logging-es-kopf-config
-            defaultMode: 0777
-        - name: run
-          configMap:
-            name: logging-es-kopf-run
-            defaultMode: 0777
-
 - kind: ConfigMap
   metadata:
     name: logging-es-kopf-run
@@ -173,7 +229,7 @@ objects:
       openssl rsa -in /etc/elasticsearch/secret/admin-key >> /tmp/certs/adminkeypair.pem
       chmod 644 /tmp/certs/adminkeypair.pem
 
-      exec /usr/bin/run-httpd -f
+      exec /usr/bin/run-httpd
 
 - kind: ConfigMap
   metadata:
@@ -537,90 +593,67 @@ objects:
       IncludeOptional conf.d/*.conf
       IncludeOptional /opt/app-root/etc/httpd.d/*.conf
 
-
-      # LoadModule log_forensic_module /etc/httpd/modules/mod_log_forensic.so
-      # <IfModule log_forensic_module>
-      #    ForensicLog /var/log/httpd/forensic_log
-      # </IfModule>
-      #
-      # <IfModule dumpio_module>
-      #     LogLevel debug
-      #     DumpIOInput On
-      #     DumpIOOutput On
-      # </IfModule>
-
       <VirtualHost *:*>
+          SSLProxyVerify none
+          SSLProxyCheckPeerCN Off
+          SSLProxyCheckPeerName Off
 
           ProxyRequests Off
           ProxyPreserveHost On
-
-          SSLProxyVerify none
-
           SSLProxyEngine On
-          SSLProxyCheckPeerCN Off
-          SSLProxyCheckPeerName Off
-          SSLCACertificateFile   /etc/elasticsearch/secret/admin-ca
-          SSLCertificateFile     /etc/elasticsearch/secret/admin-cert
-          SSLCertificateKeyFile  /etc/elasticsearch/secret/admin-key
-          SSLProxyCACertificateFile /etc/elasticsearch/secret/admin-ca
-
-          SSLProxyMachineCertificateFile /tmp/certs/adminkeypair.pem
-
-          # SetEnvIf X-Forwarded-Access-Token "(.+)" AuthToken=$1
-          # RequestHeader set Authorization "Bearer %{AuthToken}e" env=AuthToken
-          #
-          # SetEnvIf X-Forwarded-User "(.+)" ForwardedUser=$1
-          # RequestHeader set X-Proxy-Remote-User  %{ForwardedUser}e env=ForwardedUser
-
+          SSLCACertificateFile            /etc/elasticsearch/secret/admin-ca
+          SSLCertificateFile              /etc/elasticsearch/secret/admin-cert
+          SSLCertificateKeyFile           /etc/elasticsearch/secret/admin-key
+          SSLProxyCACertificateFile       /etc/elasticsearch/secret/admin-ca
+          SSLProxyMachineCertificateFile  /tmp/certs/adminkeypair.pem
           <Location /es>
-
             ProxyPass         "https://logging-es:9200/"
             ProxyPassReverse  "https://logging-es:9200/"
             Order allow,deny
             Allow from all
             RewriteEngine On
             RewriteRule "^/es/(.*)$" "/$1"
-
-            # RewriteCond %{X-Forwarded-Access-Token} (.+)
-            # RewriteRule ^.+$ - [E=AuthToken:%1]
-            # RequestHeader unset Authorization
-            # RequestHeader set Authorization "Bearer %{AuthToken}e" env=AuthToken
-            #
-            # RewriteCond %{X-Forwarded-User} (.+)
-            # RewriteRule ^.+$ - [E=ForwardedUser:%1]
-            # RequestHeader unset X-Proxy-Remote-User
-            # RequestHeader set X-Proxy-Remote-User %{ForwardedUser}e" env=ForwardedUser
           </Location>
       </VirtualHost>
 
 parameters:
-- name: NAME
-  displayName: Name
-  description: The name assigned to all of the frontend objects defined in this template.
-  required: true
-  value: logging-es-kopf
 - name: NAMESPACE
   displayName: Namespace
-  description: The OpenShift Namespace where the ImageStream resides.
+  description: The Namespace where the ImageStream resides.
   required: true
-  value: openshift
-- name: MEMORY_LIMIT
-  displayName: Memory Limit
-  description: Maximum amount of memory the container can use.
+  value: logging
+- name: KOPF_SECURE_URL
+  displayName: Kopf public URL
+  description: The public URL for the Openshift OAuth Provider. Enter value without https://
   required: true
-  value: 512Mi
+- name: KOPF_MEMORY_LIMIT
+  displayName: Memory Limit for Kopf container
+  description: Maximum amount of memory the Kopf container can use.
+  required: true
+  value: 128Mi
+- name: AUTH_PROXY_MEMORY_LIMIT
+  displayName: Memory Limit for Openshift Auth Proxy container
+  description: Maximum amount of memory the Auth Proxy container can use.
+  required: true
+  value: 128Mi
 - name: SOURCE_REPOSITORY_URL
   displayName: Git Repository URL
-  description: The URL of the repository with your application source code.
+  description: The URL of the repository with Kopf application source code.
   required: true
   value: https://github.com/lmenezes/elasticsearch-kopf.git
 - name: SOURCE_REPOSITORY_REF
   displayName: Git Reference
-  description: Set this to a branch name, tag or other ref of your repository if you
-    are not using the default branch.
-  value: master
+  description: Set this to select the Kopf release, which you want to use.
+  value: v2.1.2
 - name: CONTEXT_DIR
   displayName: Context Directory
-  description: Set this to the relative path to your project if it is not in the root
-    of your repository.
+  description: The relative path to Kopf www resources is _site.
   value: _site
+- description: The session secret for the proxy
+  name: SESSION_SECRET
+  generate: expression
+  from: "[a-zA-Z0-9]{43}"
+- description: "Oauth client secret"
+  name: "OPENSHIFT_OAUTH_CLIENT_SECRET"
+  from: "user[a-zA-Z0-9]{64}"
+  generate: "expression"
