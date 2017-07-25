@@ -13,8 +13,8 @@ metadata:
 labels:
   template: logging-es-kopf
 objects:
-- apiVersion: v1
-  kind: OAuthClient
+- kind: OAuthClient
+  apiVersion: v1
   metadata:
     labels:
       logging-infra: support
@@ -28,8 +28,8 @@ objects:
     - user:info
     - user:check-access
     - user:list-projects
-- apiVersion: v1
-  kind: ServiceAccount
+- kind: ServiceAccount
+  apiVersion: v1
   metadata:
     name: aggregated-logging-es-kopf
     labels:
@@ -37,6 +37,7 @@ objects:
     annotations:
       serviceaccounts.openshift.io/oauth-redirectreference.primary: '{"kind":"OAuthRedirectReference","apiVersion":"v1","reference":{"kind":"Route","name":"logging-es-kopf"}}'
 - kind: Route
+  apiVersion: v1
   metadata:
     name: logging-es-kopf
     labels:
@@ -48,6 +49,7 @@ objects:
     tls:
       termination: Reencrypt
 - kind: Service
+  apiVersion: v1
   metadata:
     name: logging-es-kopf
     annotations:
@@ -200,6 +202,7 @@ objects:
           name: logging-es-kopf:latest
     - type: ConfigChange
 - kind: ConfigMap
+  apiVersion: v1
   metadata:
     name: logging-es-kopf-run
     labels:
@@ -232,6 +235,7 @@ objects:
       exec /usr/bin/run-httpd
 
 - kind: ConfigMap
+  apiVersion: v1
   metadata:
     name: logging-es-kopf-config
     labels:
