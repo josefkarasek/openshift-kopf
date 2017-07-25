@@ -4,8 +4,9 @@ apiVersion: v1
 metadata:
   name: logging-es-kopf
   annotations:
-    openshift.io/display-name: Web administration tool for elasticsearch
-    description: Kopf is a simple web administration tool for elasticsearch written in JavaScript + AngularJS + jQuery + Twitter bootstrap. For more information see github.com/lmenezes/elasticsearch-kopf
+    openshift.io/display-name: Kopf for Origin Aggregated Logging
+    description: Kopf is a simple web administration tool for elasticsearch written in JavaScript + AngularJS + jQuery + Twitter bootstrap. For more information see github.com/lmenezes/elasticsearch-kopf.
+      It is expected that Origin Aggregated Logging project has been deployed.
     tags: kopf,elasticsearch,administration
     iconClass: icon-apache
     template.openshift.io/long-description: This template defines resources needed
@@ -610,8 +611,8 @@ objects:
           SSLProxyCACertificateFile       /etc/elasticsearch/secret/admin-ca
           SSLProxyMachineCertificateFile  /tmp/certs/adminkeypair.pem
           <Location /es>
-            ProxyPass         "https://logging-es:9200/"
-            ProxyPassReverse  "https://logging-es:9200/"
+            ProxyPass         "https://${ES_SERVICE_NAME}:${ES_SERVICE_PORT}/"
+            ProxyPassReverse  "https://${ES_SERVICE_NAME}:${ES_SERVICE_PORT}/"
             Order allow,deny
             Allow from all
             RewriteEngine On
@@ -652,11 +653,19 @@ parameters:
   displayName: Context Directory
   description: The relative path to Kopf www resources is _site.
   value: _site
-- description: The session secret for the proxy
-  name: SESSION_SECRET
-  generate: expression
+- name: ES_SERVICE_NAME
+  displayName: The Elasticsearch service name
+  description: Optionally use this variable to change the service name. Default is logging-es.
+  value: logging-es
+- name: ES_SERVICE_PORT
+  displayName: The Elasticsearch service port
+  description: Optionally use this variable to change the service port. Default is 9200.
+  value: "9200"
+- name: SESSION_SECRET
+  description: The session secret for the proxy. Generated automatically.
+  generate: "expression"
   from: "[a-zA-Z0-9]{43}"
-- description: "Oauth client secret"
-  name: "OPENSHIFT_OAUTH_CLIENT_SECRET"
+- name: OPENSHIFT_OAUTH_CLIENT_SECRET
+  description: Oauth client secret. Generated automatically.
   from: "user[a-zA-Z0-9]{64}"
   generate: "expression"
