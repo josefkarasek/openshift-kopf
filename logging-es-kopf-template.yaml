@@ -162,7 +162,6 @@ objects:
           - --tls-key=/etc/tls/private/tls.key
           - --cookie-secret=${SESSION_SECRET}=
           - -pass-access-token
-          - -ssl-insecure-skip-verify=true
           ports:
           - containerPort: 4443
             name: kopf-proxy
